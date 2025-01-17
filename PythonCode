@@ -1,0 +1,295 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.linalg import eigh
+from scipy.integrate import odeint
+
+# =============================================================================
+# 1. Analysis of a 1D Bar (Axial Elements)
+# =============================================================================
+
+def analyze_bar():
+    # -------------------------------
+    # Geometry & Material Properties for the Bar
+    # -------------------------------
+    L = 10.0            # Total length (m)
+    num_elem = 10       # Number of elements
+    num_nodes = num_elem + 1
+    A = 1.0             # Cross-sectional area (m^2)
+    E = 210e9           # Young's modulus (Pa) - e.g., steel
+    rho = 7850          # Density (kg/m^3) - e.g., steel
+
+    Le = L / num_elem   # Length of each element
+
+    # -------------------------------
+    # Element Matrices (Axial Bar Element)
+    # -------------------------------
+    # Local stiffness: ke = (E*A/Le) * [ [1, -1], [-1, 1] ]
+    ke = (E * A / Le) * np.array([[1, -1],
+                                  [-1, 1]])
+    # Local consistent mass matrix: me = (rho*A*Le/6)* [ [2, 1], [1, 2] ]
+    me = (rho * A * Le / 6.0) * np.array([[2, 1],
+                                          [1, 2]])
+
+    # -------------------------------
+    # Global Assembly
+    # -------------------------------
+    K_global = np.zeros((num_nodes, num_nodes))
+    M_global = np.zeros((num_nodes, num_nodes))
+    for e in range(num_elem):
+        idx = [e, e+1]
+        K_global[np.ix_(idx, idx)] += ke
+        M_global[np.ix_(idx, idx)] += me
+
+    # -------------------------------
+    # Apply Boundary Conditions
+    # -------------------------------
+    # For example, fix the left end (node 0)
+    K_reduced = K_global[1:, 1:]
+    M_reduced = M_global[1:, 1:]
+
+    # -------------------------------
+    # Solve the Generalized Eigenvalue Problem
+    # -------------------------------
+    eigvals, eigvecs = eigh(K_reduced, M_reduced)
+    # Natural frequencies: omega = sqrt(eigvals)
+    omega = np.sqrt(eigvals)
+    freq_hz = omega / (2*np.pi)
+    sorted_indices = np.argsort(omega)
+    omega = omega[sorted_indices]
+    freq_hz = freq_hz[sorted_indices]
+    eigvecs = eigvecs[:, sorted_indices]
+
+    print("=== 1D Bar Analysis ===")
+    print("Natural Frequencies (Hz):", freq_hz[:5])
+
+    # -------------------------------
+    # Plot Mode Shapes along the Bar
+    # -------------------------------
+    # Reinsert the fixed node (displacement = 0 at node 0)
+    x_coords = np.linspace(0, L, num_nodes)
+    num_modes_to_plot = 3
+    for mode in range(num_modes_to_plot):
+        mode_shape = np.zeros(num_nodes)
+        mode_shape[0] = 0.0
+        mode_shape[1:] = eigvecs[:, mode]
+        plt.figure(figsize=(8,4))
+        plt.plot(x_coords, mode_shape, '-o', linewidth=2, markersize=6)
+        plt.title(f'1D Bar - Mode {mode+1} (f = {freq_hz[mode]:.2f} Hz)')
+        plt.xlabel('Position along bar (m)')
+        plt.ylabel('Relative Displacement (a.u.)')
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+
+# =============================================================================
+# 2. Analysis of a Beam (Euler–Bernoulli Beam Element)
+# =============================================================================
+def analyze_beam():
+    # -------------------------------
+    # Geometry & Material Properties for the Beam
+    # -------------------------------
+    L = 10.0            # Length of beam (m)
+    num_elem = 10       # Number of beam elements
+    num_nodes = num_elem + 1
+    # For a beam element, each node has 2 dof: transverse displacement and rotation.
+    dof_per_node = 2
+    total_dof = num_nodes * dof_per_node
+
+    E = 210e9           # Young's modulus (Pa)
+    I = 1e-4            # Moment of Inertia (m^4)
+    A = 0.01            # Cross-sectional area (m^2) -- used for mass
+    rho = 7850          # Density (kg/m^3)
+
+    Le = L / num_elem
+
+    # -------------------------------
+    # Element Matrices for Euler–Bernoulli Beam
+    # -------------------------------
+    # Element stiffness matrix (4x4)
+    Ke = (E * I / (Le**3)) * np.array([[ 12,        6*Le,    -12,         6*Le],
+                                       [6*Le, 4*Le**2,   -6*Le,   2*Le**2],
+                                       [-12,       -6*Le,     12,        -6*Le],
+                                       [6*Le, 2*Le**2,  -6*Le,   4*Le**2]])
+    # Element consistent mass matrix (4x4)
+    Me = (rho * A * Le / 420) * np.array([[156,   22*Le,   54,   -13*Le],
+                                          [22*Le,  4*Le**2, 13*Le, -3*Le**2],
+                                          [54,    13*Le,   156,   -22*Le],
+                                          [-13*Le, -3*Le**2, -22*Le,  4*Le**2]])
+
+    # -------------------------------
+    # Global Assembly
+    # -------------------------------
+    K_global = np.zeros((total_dof, total_dof))
+    M_global = np.zeros((total_dof, total_dof))
+
+    for e in range(num_elem):
+        # Each beam element connects nodes e and e+1
+        # Global dof indices: [2*e, 2*e+1, 2*(e+1), 2*(e+1)+1]
+        dof_indices = [2*e, 2*e+1, 2*(e+1), 2*(e+1)+1]
+        for i in range(4):
+            for j in range(4):
+                K_global[dof_indices[i], dof_indices[j]] += Ke[i, j]
+                M_global[dof_indices[i], dof_indices[j]] += Me[i, j]
+
+    # -------------------------------
+    # Apply Boundary Conditions
+    # -------------------------------
+    # For example, let’s assume the beam is clamped at the left end (node 0: displacement and rotation zero)
+    fixed_dofs = [0, 1]
+    free_dofs = np.setdiff1d(np.arange(total_dof), fixed_dofs)
+    K_reduced = K_global[np.ix_(free_dofs, free_dofs)]
+    M_reduced = M_global[np.ix_(free_dofs, free_dofs)]
+
+    # -------------------------------
+    # Solve the Generalized Eigenvalue Problem
+    # -------------------------------
+    eigvals, eigvecs = eigh(K_reduced, M_reduced)
+    omega = np.sqrt(eigvals)
+    freq_hz = omega/(2*np.pi)
+    sorted_indices = np.argsort(omega)
+    omega = omega[sorted_indices]
+    freq_hz = freq_hz[sorted_indices]
+    eigvecs = eigvecs[:, sorted_indices]
+
+    print("=== Beam Analysis ===")
+    print("Natural Frequencies (Hz):", freq_hz[:5])
+
+    # -------------------------------
+    # Plot Mode Shapes (Transverse Displacement Only)
+    # -------------------------------
+    # We will plot only the transverse displacement (first dof at each node) of a few modes.
+    num_modes_to_plot = 3
+    x_coords = np.linspace(0, L, num_nodes)
+
+    # Reconstruct full mode shape vector by inserting the fixed dofs back.
+    # (Here, the free_dofs vector is used but we know that node0 displacement = 0.)
+    for mode in range(num_modes_to_plot):
+        mode_shape = np.zeros(total_dof)
+        mode_shape[free_dofs] = eigvecs[:, mode]
+        # Extract transverse displacements (every 2nd dof starting at 0)
+        transverse = mode_shape[0::2]
+        plt.figure(figsize=(8,4))
+        plt.plot(x_coords, transverse, '-o', linewidth=2, markersize=6)
+        plt.title(f'Beam - Mode {mode+1} (f = {freq_hz[mode]:.2f} Hz)')
+        plt.xlabel('Position along beam (m)')
+        plt.ylabel('Transverse Displacement (a.u.)')
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+
+# =============================================================================
+# 3. Analysis of a Plate (2D Finite Difference Approximation)
+# =============================================================================
+def analyze_plate():
+    # In this example, we model the vibration of a simply supported rectangular membrane.
+    # (A full plate bending formulation is more complex; here we use the Laplacian operator
+    # to obtain a multi–DOF eigenvalue problem for a 2D domain.)
+
+    # -------------------------------
+    # Geometry & Properties
+    # -------------------------------
+    Lx = 1.0    # Length in x-direction (m)
+    Ly = 1.0    # Length in y-direction (m)
+    NX = 21     # Number of grid points in x-direction
+    NY = 21     # Number of grid points in y-direction
+    dx = Lx / (NX - 1)
+    dy = Ly / (NY - 1)
+
+    # For a membrane, we assume a constant density and tension.
+    rho = 1.0    # mass per unit area (kg/m^2) [for demonstration]
+    T = 100.0    # Tension (N/m)
+
+    # -------------------------------
+    # Assembly using Finite Difference (5-point Laplacian)
+    # -------------------------------
+    # Number of unknowns:
+    N = NX * NY
+
+    # Create global stiffness (K) and mass (M) matrices.
+    # For a membrane, the eigenvalue problem is: K * w = lambda * M * w,
+    # with K approximating -T * Laplacian and M the mass matrix.
+    K = np.zeros((N, N))
+    M = np.zeros((N, N))
+
+    # Mapping from 2D grid indices (i,j) to global index: index = i*NY + j.
+    def index(i, j):
+        return i * NY + j
+
+    for i in range(NX):
+        for j in range(NY):
+            idx = index(i, j)
+            # Mass matrix: for simplicity, assume lumped mass (area per node)
+            M[idx, idx] = rho * dx * dy
+
+            # Check if node is interior; use 5-point finite difference for Laplacian.
+            # For Dirichlet BC (simply supported or fixed edges) set displacement=0 at boundaries.
+            if i == 0 or i == NX-1 or j == 0 or j == NY-1:
+                # Boundary node: enforce Dirichlet: set corresponding row to identity.
+                K[idx, idx] = 1e20  # A large number to force zero displacement.
+            else:
+                # Interior node: Laplacian discretization
+                K[idx, idx] = 2*T*(1/dx**2 + 1/dy**2)
+                K[idx, index(i+1, j)] = -T/dx**2
+                K[idx, index(i-1, j)] = -T/dx**2
+                K[idx, index(i, j+1)] = -T/dy**2
+                K[idx, index(i, j-1)] = -T/dy**2
+
+    # -------------------------------
+    # Solve the Eigenvalue Problem
+    # -------------------------------
+    # We solve K * w = lambda * M * w.
+    # Note: With Dirichlet BC, many eigenvectors will be near zero (or forced);
+    # we extract a few modes away from the high penalty values.
+    eigvals, eigvecs = eigh(K, M)
+    # Sort eigenvalues and frequencies:
+    idx_sorted = np.argsort(eigvals)
+    eigvals = eigvals[idx_sorted]
+    eigvecs = eigvecs[:, idx_sorted]
+
+    # Natural frequencies (for a membrane, lambda = omega^2)
+    omega = np.sqrt(np.abs(eigvals))
+    freq_hz = omega / (2*np.pi)
+
+    print("=== Plate (Membrane) Analysis ===")
+    print("Lowest 6 frequencies (Hz):", freq_hz[:6])
+
+    # -------------------------------
+    # Plot a few mode shapes
+    # -------------------------------
+    num_modes_to_plot = 3
+    X = np.linspace(0, Lx, NX)
+    Y = np.linspace(0, Ly, NY)
+    Xgrid, Ygrid = np.meshgrid(Y, X)  # note the order: (row, col)
+
+    for mode in range(num_modes_to_plot):
+        mode_shape = eigvecs[:, mode].reshape((NX, NY))
+        plt.figure(figsize=(6,5))
+        cp = plt.contourf(Xgrid, Ygrid, mode_shape, levels=50, cmap='viridis')
+        plt.title(f'Plate Mode {mode+1} (f = {freq_hz[mode]:.2f} Hz)')
+        plt.xlabel('x (m)')
+        plt.ylabel('y (m)')
+        plt.colorbar(cp)
+        plt.tight_layout()
+        plt.show()
+
+
+# =============================================================================
+# Main Function to Run All Analyses
+# =============================================================================
+def main():
+    print("Finite Element (and Finite Difference) Analyses of Various Systems\n")
+
+    # 1D Bar
+    analyze_bar()
+
+    # Beam
+    analyze_beam()
+
+    # Plate (Membrane)
+    analyze_plate()
+
+
+if __name__ == '__main__':
+    main()
